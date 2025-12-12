@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const RevokedToken = require('../models/RevokedToken');
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
   console.warn('⚠️  JWT_SECRET not set in .env, using default (INSECURE for production!)');
@@ -44,12 +45,19 @@ function verifyAccessToken(token) {
   }
 }
 
-function verifyRefreshToken(token) {
+async function verifyRefreshToken(token) {
   try {
     const decoded = jwt.verify(token, JWT_REFRESH_SECRET, { algorithms: [JWT_ALGORITHM] });
     if (decoded.type !== 'refresh') {
       throw new Error('Invalid token type');
     }
+
+    // Check if token has been revoked
+    const revoked = await RevokedToken.findOne({ token });
+    if (revoked) {
+      throw new Error('Refresh token has been revoked');
+    }
+
     return decoded;
   } catch (err) {
     throw new Error('Invalid or expired refresh token');

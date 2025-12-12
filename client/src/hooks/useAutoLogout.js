@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 /**
  * Custom hook for automatic logout based on inactivity
@@ -7,13 +7,16 @@ import { useEffect, useRef, useState } from 'react';
  * @param {number} warningTime - Time before logout to show warning in milliseconds (default: 2 min)
  * @param {Object} options - Additional options like notifications, sound, etc.
  */
-export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warningTime = 2 * 60 * 1000, options = {}) {
+export function useAutoLogout(onLogout, inactivityTimeout = 5 * 60 * 1000, warningTime = 60 * 1000, options = {}) {
   const {
     enableSound = true,
     enableNotification = true,
     graceperiodSeconds = 5,
     trackActivity = true,
     onBeforeLogout = null,  // Callback before logout (for auto-save)
+    onBeforeUnload = null, // Callback to run during unload (should use sendBeacon-safe operations)
+    // When true, immediately logout on tab/window close using sendBeacon
+    logoutOnClose = true,
     enableKeyboardShortcut = true,  // Ctrl/Cmd + Shift + L to logout
     enableMultiTabSync = true,  // Sync logout across tabs
     soundVolume = 0.3  // Sound volume 0-1
@@ -31,10 +34,34 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
   const warningTimer = useRef(null);
   const warningIntervalRef = useRef(null);
   const activityIntervalRef = useRef(null);
-  const audioRef = useRef(null);
+  // audioRef removed - simple Web Audio API is used for warnings
   const notificationShownRef = useRef(false);
+  const startTimeRef = useRef(new Date());
 
-  const resetTimers = () => {
+  const playWarningSound = useCallback(() => {
+    try {
+      // Create a simple beep using Web Audio API
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 800; // 800 Hz
+      oscillator.type = 'sine';
+
+      gainNode.gain.setValueAtTime(soundVolume, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+    } catch (err) {
+      console.warn('Could not play warning sound:', err);
+    }
+  }, [soundVolume]);
+
+  const resetTimers = useCallback(() => {
     // Clear all existing timers
     if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
     if (warningTimer.current) clearTimeout(warningTimer.current);
@@ -104,7 +131,7 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
         onLogout();
       }
     }, inactivityTimeout);
-  };
+  }, [inactivityTimeout, warningTime, enableSound, enableNotification, graceperiodSeconds, trackActivity, onLogout, playWarningSound]);
 
   const extendSession = () => {
     setShowWarning(false);
@@ -114,29 +141,6 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
     resetTimers();
   };
 
-  const playWarningSound = () => {
-    try {
-      // Create a simple beep using Web Audio API
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      oscillator.frequency.value = 800; // 800 Hz
-      oscillator.type = 'sine';
-
-      gainNode.gain.setValueAtTime(soundVolume, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (err) {
-      console.warn('Could not play warning sound:', err);
-    }
-  };
-
   const cancelLogout = () => {
     if (graceTimer !== null) {
       setGraceTimer(null);
@@ -144,7 +148,7 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
     }
   };
 
-  const performLogout = () => {
+  const performLogout = useCallback(() => {
     // Call before logout callback if provided (for auto-save)
     if (onBeforeLogout && typeof onBeforeLogout === 'function') {
       try {
@@ -160,15 +164,15 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
     }
     
     onLogout();
-  };
+  }, [onBeforeLogout, enableMultiTabSync, onLogout]);
 
-  const handleKeyboardShortcut = (e) => {
+  const handleKeyboardShortcut = useCallback((e) => {
     // Ctrl/Cmd + Shift + L for logout
     if (enableKeyboardShortcut && (e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
       e.preventDefault();
       performLogout();
     }
-  };
+  }, [enableKeyboardShortcut, performLogout]);
 
   useEffect(() => {
     // Request notification permission
@@ -240,13 +244,59 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
       window.addEventListener('storage', handleStorageChange);
     }
 
-    // Store session info in localStorage
-    const sessionInfo = {
-      startTime: new Date().toISOString(),
-      extensionCount: extensionCount,
-      lastActivity: lastActivity.toISOString()
+    // Logout on tab close: use navigator.sendBeacon to revoke refresh token server-side
+    const handleTabClose = () => {
+      // Allow consumer to run any unload-safe operations (like a sendBeacon to save data)
+      try {
+        if (onBeforeUnload && typeof onBeforeUnload === 'function') {
+          try {
+            onBeforeUnload();
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (ignored) {}
+      try {
+        const refreshToken = localStorage.getItem('refreshToken');
+        if (refreshToken && typeof navigator.sendBeacon === 'function') {
+          const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+          const url = `${apiBase}/api/auth/logout`;
+          const payload = JSON.stringify({ refreshToken });
+          const blob = new Blob([payload], { type: 'application/json' });
+          // sendBeacon runs during unload and is less likely to be aborted
+          navigator.sendBeacon(url, blob);
+        }
+      } catch (err) {
+        // ignore any errors during unload
+      }
+
+      // Immediately propagate logout across tabs and to the app without waiting
+      if (enableMultiTabSync) {
+        localStorage.setItem('logoutSignal', JSON.stringify({ timestamp: Date.now() }));
+      }
+      try {
+        // Call the onLogout callback synchronously (it will clear local storage)
+        onLogout();
+      } catch (e) {
+        // Ignore errors during unload
+      }
     };
-    localStorage.setItem('sessionInfo', JSON.stringify(sessionInfo));
+
+    if (logoutOnClose) {
+      window.addEventListener('unload', handleTabClose);
+      // beforeunload also available in case unload is not triggered in some contexts
+      window.addEventListener('beforeunload', handleTabClose);
+    }
+
+    // Store initial session start time once
+    if (!localStorage.getItem('sessionInfo')) {
+      const sessionInfo = {
+        startTime: startTimeRef.current.toISOString(),
+        extensionCount: 0,
+        lastActivity: startTimeRef.current.toISOString()
+      };
+      localStorage.setItem('sessionInfo', JSON.stringify(sessionInfo));
+    }
 
     // Cleanup
     return () => {
@@ -260,12 +310,26 @@ export function useAutoLogout(onLogout, inactivityTimeout = 15 * 60 * 1000, warn
       if (enableMultiTabSync) {
         window.removeEventListener('storage', handleStorageChange);
       }
+      if (logoutOnClose) {
+        window.removeEventListener('unload', handleTabClose);
+        window.removeEventListener('beforeunload', handleTabClose);
+      }
       if (inactivityTimer.current) clearTimeout(inactivityTimer.current);
       if (warningTimer.current) clearTimeout(warningTimer.current);
       if (warningIntervalRef.current) clearInterval(warningIntervalRef.current);
       if (activityIntervalRef.current) clearInterval(activityIntervalRef.current);
     };
-  }, [onLogout, inactivityTimeout, warningTime, enableSound, enableNotification, trackActivity, extensionCount, lastActivity, enableKeyboardShortcut, enableMultiTabSync, soundVolume, onBeforeLogout]);
+  }, [onLogout, inactivityTimeout, warningTime, enableSound, enableNotification, trackActivity, enableKeyboardShortcut, enableMultiTabSync, soundVolume, onBeforeLogout, performLogout, resetTimers, handleKeyboardShortcut]);
+
+  // Update session info (extensionCount/lastActivity) separately without causing the main effect to re-run
+  useEffect(() => {
+    const sessionInfo = {
+      startTime: startTimeRef.current.toISOString(),
+      extensionCount: extensionCount,
+      lastActivity: lastActivity.toISOString()
+    };
+    localStorage.setItem('sessionInfo', JSON.stringify(sessionInfo));
+  }, [extensionCount, lastActivity]);
 
   return {
     showWarning,

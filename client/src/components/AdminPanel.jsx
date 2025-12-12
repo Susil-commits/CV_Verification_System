@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { adminApi } from '../services/api';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { adminApi, authApi } from '../services/api';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import SessionWarning from './SessionWarning';
 import SessionStatus from './SessionStatus';
@@ -7,6 +7,7 @@ import ActivityTracker from './ActivityTracker';
 import SessionProgressBar from './SessionProgressBar';
 import IdleIndicator from './IdleIndicator';
 import SessionTimer from './SessionTimer';
+import useApiRateLimit from '../hooks/useApiRateLimit';
 
 export default function AdminPanel({ token, onLogout }) {
   const [cvs, setCvs] = useState([]);
@@ -16,29 +17,9 @@ export default function AdminPanel({ token, onLogout }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   
-  const handleBeforeLogout = () => {
-    // Auto-save any pending changes
-    console.log('Auto-saving session data before logout...');
-    // You can add save logic here
-  };
+  const { remaining: rateLimitRemaining, isRateLimited } = useApiRateLimit();
 
-  const { showWarning, timeLeft, extendSession, lastActivity, inactiveFor, extensionCount, graceTimer, cancelLogout, isIdle, sessionProgress, performLogout } = useAutoLogout(
-    onLogout,
-    20 * 60 * 1000,
-    3 * 60 * 1000,
-    { 
-      enableSound: true,
-      enableNotification: true,
-      graceperiodSeconds: 5,
-      trackActivity: true,
-      onBeforeLogout: handleBeforeLogout,
-      enableKeyboardShortcut: true,  // Ctrl+Shift+L to logout
-      enableMultiTabSync: true,      // Sync across tabs
-      soundVolume: 0.3
-    }
-  );
-
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const data = await adminApi.list(token);
@@ -52,11 +33,88 @@ export default function AdminPanel({ token, onLogout }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [token, selected]);
+
+  const handleBeforeLogout = useCallback(async () => {
+    // Auto-save any pending changes
+    console.log('Auto-saving session data before logout...');
+    try {
+      // Optionally call an API to save any transient admin state; for now, just attempt a refresh of the list
+      await load();
+    } catch (err) {
+      console.warn('Error auto-saving before logout:', err);
+    }
+
+    // Revoke the refresh token server-side for added security
+    try {
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken) {
+        await authApi.logout(refreshToken);
+      }
+    } catch (err) {
+      console.warn('Error revoking refresh token on logout:', err);
+    }
+  }, [load]);
+
+  const handleBeforeUnload = useCallback(() => {
+    try {
+      // Optionally persist admin UI state
+      try {
+        const snapshot = { selectedId: selected?._id ?? null, search, statusFilter };
+        localStorage.setItem('adminUnsavedState', JSON.stringify(snapshot));
+      } catch (e) {
+        // ignore
+      }
+
+      // Revoke refresh token via sendBeacon to ensure server-side revocation during unload.
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken && typeof navigator.sendBeacon === 'function') {
+        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+        const url = `${apiBase}/api/auth/logout`;
+        const payload = JSON.stringify({ refreshToken });
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(url, blob);
+      }
+    } catch (err) {
+      console.warn('Error in admin beforeunload handler:', err);
+    }
+  }, [selected, search, statusFilter]);
+
+  const { showWarning, timeLeft, extendSession, lastActivity, inactiveFor, extensionCount, graceTimer, cancelLogout, isIdle, sessionProgress } = useAutoLogout(
+    onLogout,
+    5 * 60 * 1000,
+    60 * 1000,
+    { 
+      enableSound: true,
+      enableNotification: true,
+      graceperiodSeconds: 5,
+      trackActivity: true,
+      onBeforeLogout: handleBeforeLogout,
+      onBeforeUnload: handleBeforeUnload,
+      enableKeyboardShortcut: true,  // Ctrl+Shift+L to logout
+      enableMultiTabSync: true,      // Sync across tabs
+      soundVolume: 0.3
+    }
+  );
 
   useEffect(() => {
+    // Restore any unsaved admin UI state from previous unload
+    try {
+      const saved = localStorage.getItem('adminUnsavedState');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed) {
+          if (parsed.selectedId) setSelected({ _id: parsed.selectedId });
+          if (parsed.search) setSearch(parsed.search);
+          if (parsed.statusFilter) setStatusFilter(parsed.statusFilter);
+        }
+        localStorage.removeItem('adminUnsavedState');
+      }
+    } catch (e) {
+      // ignore
+    }
     load();
-  }, []);
+  }, [load]);
 
   const stats = useMemo(() => {
     const total = cvs.length;
@@ -120,7 +178,7 @@ export default function AdminPanel({ token, onLogout }) {
             <p className="muted">Review and manage CV submissions</p>
           </div>
           <div className="header-actions">
-            <SessionTimer inactiveFor={inactiveFor} inactivityTimeout={20 * 60 * 1000} />
+            <SessionTimer inactiveFor={inactiveFor} inactivityTimeout={5 * 60 * 1000} />
             <button className="link" onClick={onLogout}>
               Logout
             </button>
@@ -161,7 +219,7 @@ export default function AdminPanel({ token, onLogout }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <button onClick={load}>Refresh</button>
+          <button onClick={load} disabled={isRateLimited}>{isRateLimited ? `Refresh (wait ${rateLimitRemaining}s)` : 'Refresh'}</button>
         </div>
 
         {message && <p className="error">{message}</p>}

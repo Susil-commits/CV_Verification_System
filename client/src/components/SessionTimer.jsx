@@ -1,4 +1,4 @@
-export default function SessionTimer({ inactiveFor, inactivityTimeout = 20 * 60 * 1000 }) {
+export default function SessionTimer({ inactiveFor, inactivityTimeout = 5 * 60 * 1000 }) {
   const timeoutSeconds = inactivityTimeout / 1000;
   const timeRemaining = Math.max(0, timeoutSeconds - inactiveFor);
   const minutes = Math.floor(timeRemaining / 60);

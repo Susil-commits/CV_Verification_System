@@ -4,15 +4,21 @@ const Joi = require('joi');
 const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const { generateAccessToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
+const RevokedToken = require('../models/RevokedToken');
 
 const router = express.Router();
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  message: 'Too many login attempts, please try again after 15 minutes.',
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  handler: (req, res /*, next */) => {
+    console.warn(`Auth rate limit exceeded for IP=${req.ip} route=${req.originalUrl}`);
+    const retryAfterSeconds = Math.ceil((15 * 60));
+    res.set('Retry-After', String(retryAfterSeconds));
+    res.status(429).json({ message: 'Too many login attempts, please try again after 15 minutes.' });
+  }
 });
 
 const adminIdentifier = process.env.ADMIN_EMAIL || 'admin@123';
@@ -124,7 +130,7 @@ router.post('/refresh', async (req, res) => {
       return res.status(400).json({ message: 'Refresh token required' });
     }
 
-    const decoded = verifyRefreshToken(refreshToken);
+    const decoded = await verifyRefreshToken(refreshToken);
 
     const user = await User.findById(decoded.id);
     if (!user) {
@@ -140,6 +146,25 @@ router.post('/refresh', async (req, res) => {
     });
   } catch (err) {
     return res.status(401).json({ message: err.message || 'Invalid refresh token' });
+  }
+});
+
+router.post('/logout', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) {
+      return res.status(400).json({ message: 'Refresh token required' });
+    }
+
+    const decoded = await verifyRefreshToken(refreshToken);
+    const expiresAt = decoded.exp ? new Date(decoded.exp * 1000) : new Date(Date.now() + 1000 * 60 * 60 * 24);
+
+    await RevokedToken.create({ token: refreshToken, expiresAt });
+
+    return res.json({ message: 'Logged out' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Server error' });
   }
 });
 

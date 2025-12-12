@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './App.css';
 import AuthForms from './components/AuthForms';
 import UserPanel from './components/UserPanel';
@@ -14,13 +14,11 @@ function App() {
     return stored ? JSON.parse(stored) : null;
   });
   const [info, setInfo] = useState('');
-  const [portal, setPortal] = useState('user');
-
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      setPortal('admin');
-    }
-  }, [user]);
+  const [portal, setPortal] = useState(() => {
+    const stored = localStorage.getItem('user');
+    const parsed = stored ? JSON.parse(stored) : null;
+    return parsed?.role === 'admin' ? 'admin' : 'user';
+  });
 
   const handleAuth = async (mode, payload) => {
     if (mode === 'register') {
@@ -58,11 +56,25 @@ function App() {
   };
 
   const handleLogout = () => {
+    // Try to ask server to revoke the refresh token before clearing local session
+    const refreshToken = localStorage.getItem('refreshToken');
+    if (refreshToken) {
+      authApi.logout(refreshToken).catch(() => {
+        // If the server call fails, just continue to clear local session
+      });
+    }
     setToken(null);
     setUser(null);
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    // clear transient unsaved state
+    try {
+      localStorage.removeItem('unsavedCv');
+      localStorage.removeItem('adminUnsavedState');
+    } catch (e) {
+      // ignore
+    }
     setInfo('You have been logged out.');
     setPortal('user');
   };

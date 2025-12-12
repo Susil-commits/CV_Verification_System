@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import useApiRateLimit from '../hooks/useApiRateLimit';
 
 const initialLogin = { email: '', password: '' };
 const initialRegister = { name: '', email: '', password: '' };
@@ -9,6 +10,14 @@ export default function AuthForms({ onAuth }) {
   const [registerValues, setRegisterValues] = useState(initialRegister);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { isRateLimited, remaining } = useApiRateLimit();
+  const passwordAttributes =
+    mode === 'register'
+      ? {
+          pattern: '^(?=.*[A-Za-z])(?=.*\\d).+$',
+          title: 'Must contain at least one letter and one number.'
+        }
+      : {};
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -47,7 +56,7 @@ export default function AuthForms({ onAuth }) {
               required
               minLength={2}
               maxLength={100}
-              pattern="^[A-Za-z][A-Za-z\s.'-]*$"
+              pattern="^[A-Za-z][A-Za-z\\s.'-]*$"
               title="Use letters, spaces, apostrophes, periods, or dashes only."
             />
           </label>
@@ -80,14 +89,14 @@ export default function AuthForms({ onAuth }) {
               required
               minLength={8}
               maxLength={128}
-              pattern="^(?=.*[A-Za-z])(?=.*\d).+$"
-              title="Must contain at least one letter and one number."
+              {...passwordAttributes}
             />
           </label>
 
         {error && <p className="error">{error}</p>}
-        <button type="submit" disabled={loading}>
-          {loading ? 'Processing...' : mode === 'login' ? 'Login' : 'Create account'}
+        {isRateLimited && <p className="error">Please wait {remaining}s before retrying.</p>}
+        <button type="submit" disabled={loading || isRateLimited}>
+          {isRateLimited ? `Try again in ${remaining}s` : loading ? 'Processing...' : mode === 'login' ? 'Login' : 'Create account'}
         </button>
       </form>
     </div>

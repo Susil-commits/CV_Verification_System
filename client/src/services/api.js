@@ -56,8 +56,30 @@ async function request(path, { token, ...options } = {}) {
       }
       return retryData;
     } catch (refreshError) {
+      // Log underlying error for debugging while returning a generic message
+      console.warn('Token refresh error:', refreshError);
       throw new Error('Session expired. Please log in again.');
     }
+  }
+
+  // Handle Too Many Requests gracefully: include Retry-After if present
+  if (response.status === 429) {
+    const retryAfter = response.headers.get('Retry-After');
+    const waitSeconds = retryAfter ? ` Retry after ${retryAfter} seconds.` : '';
+    const json = await response.json().catch(() => ({}));
+    const message = json.message || `Too many requests.${waitSeconds}`;
+    const err = new Error(message);
+    err.retryAfter = retryAfter ? parseInt(retryAfter, 10) : null;
+    err.status = 429;
+    try {
+      const manager = await import('../utils/rateLimitManager');
+      if (manager && typeof manager.emitRateLimit === 'function') {
+        manager.emitRateLimit({ message, retryAfter: err.retryAfter });
+      }
+    } catch (e) {
+      // ignore
+    }
+    throw err;
   }
 
   const data = await response.json().catch(() => ({}));
@@ -70,6 +92,7 @@ async function request(path, { token, ...options } = {}) {
 export const authApi = {
   register: (payload) => request('/api/auth/register', { method: 'POST', body: payload }),
   login: (payload) => request('/api/auth/login', { method: 'POST', body: payload })
+  ,logout: (refreshToken) => request('/api/auth/logout', { method: 'POST', body: { refreshToken } })
 };
 
 export const cvApi = {
@@ -79,8 +102,16 @@ export const cvApi = {
   remove: (id, token) => request(`/api/cv/${id}`, { method: 'DELETE', token })
 };
 
+let _adminListPromise = null;
 export const adminApi = {
-  list: (token) => request('/api/admin/cvs', { method: 'GET', token }),
+  list: (token) => {
+    if (_adminListPromise) return _adminListPromise;
+    _adminListPromise = request('/api/admin/cvs', { method: 'GET', token }).finally(() => {
+      // Clear the cached promise after a short interval to avoid long-lived cache
+      setTimeout(() => { _adminListPromise = null; }, 1000);
+    });
+    return _adminListPromise;
+  },
   updateStatus: (id, status, token) =>
     request(`/api/admin/cvs/${id}/status`, { method: 'PATCH', body: { status }, token }),
   remove: (id, token) => request(`/api/admin/cvs/${id}`, { method: 'DELETE', token })

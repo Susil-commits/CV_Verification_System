@@ -1,0 +1,25 @@
+.api-rate-limit-toast {
+  position: fixed;
+  right: 1rem;
+  top: 1rem;
+  background: #ffefef;
+  color: #3a0000;
+  border: 1px solid #ff6b6b;
+  padding: 10px 16px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+  z-index: 9999;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  min-width: 220px;
+}
+
+.api-rate-limit-toast .content {
+  display: flex;
+  flex-direction: column;
+}
+
+.api-rate-limit-toast .countdown {
+  font-weight: 700;
+}

@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import useApiRateLimit from '../hooks/useApiRateLimit';
 
 export default function AdminLoginForm({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { isRateLimited, remaining } = useApiRateLimit();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,8 +33,9 @@ export default function AdminLoginForm({ onLogin }) {
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
       </label>
       {error && <p className="error">{error}</p>}
-      <button type="submit" disabled={loading}>
-        {loading ? 'Checking...' : 'Enter admin portal'}
+      {isRateLimited && <p className="error">Please wait {remaining}s before retrying.</p>}
+      <button type="submit" disabled={loading || isRateLimited}>
+        {isRateLimited ? `Try again in ${remaining}s` : loading ? 'Checking...' : 'Enter admin portal'}
       </button>
     </form>
   );

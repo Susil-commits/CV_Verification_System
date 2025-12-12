@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { cvApi } from '../services/api';
+import { useEffect, useState, useCallback } from 'react';
+import { cvApi, authApi } from '../services/api';
 import { useAutoLogout } from '../hooks/useAutoLogout';
 import SessionWarning from './SessionWarning';
 import SessionStatus from './SessionStatus';
@@ -24,24 +24,64 @@ export default function UserPanel({ token, onLogout }) {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
 
-  const handleBeforeLogout = () => {
+  const handleBeforeLogout = useCallback(async () => {
     // Auto-save form data before logout
     if (formValues && Object.values(formValues).some(v => v)) {
       console.log('Auto-saving form data before logout...');
-      // You can add logic to save form data to localStorage or API
+      try {
+        if (cv) {
+          await cvApi.update(cv._id, formValues, token);
+        } else {
+          await cvApi.submit(formValues, token);
+        }
+      } catch (err) {
+        console.warn('Error auto-saving before logout:', err);
+      }
     }
-  };
 
-  const { showWarning, timeLeft, extendSession, lastActivity, inactiveFor, extensionCount, graceTimer, cancelLogout, isIdle, sessionProgress, performLogout } = useAutoLogout(
+    // Revoke the refresh token server-side for added security
+    try {
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken) {
+        await authApi.logout(refreshToken);
+      }
+    } catch (err) {
+      console.warn('Error revoking refresh token on logout:', err);
+    }
+  }, [formValues, cv, token]);
+
+  const handleBeforeUnload = useCallback(() => {
+    try {
+      // Persist unsaved form values locally so they can be restored on next load.
+      if (formValues && Object.values(formValues).some(v => v)) {
+        localStorage.setItem('unsavedCv', JSON.stringify(formValues));
+      }
+
+      // Revoke refresh token via sendBeacon to ensure server-side revocation during unload.
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken && typeof navigator.sendBeacon === 'function') {
+        const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+        const url = `${apiBase}/api/auth/logout`;
+        const payload = JSON.stringify({ refreshToken });
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon(url, blob);
+      }
+    } catch (err) {
+      console.warn('Error in beforeunload handler:', err);
+    }
+  }, [formValues]);
+
+  const { showWarning, timeLeft, extendSession, lastActivity, inactiveFor, extensionCount, graceTimer, cancelLogout, isIdle, sessionProgress } = useAutoLogout(
     onLogout,
-    20 * 60 * 1000,
-    3 * 60 * 1000,
+    5 * 60 * 1000,
+    60 * 1000,
     { 
       enableSound: true,
       enableNotification: true,
       graceperiodSeconds: 5,
       trackActivity: true,
       onBeforeLogout: handleBeforeLogout,
+      onBeforeUnload: handleBeforeUnload,
       enableKeyboardShortcut: true,  // Ctrl+Shift+L to logout
       enableMultiTabSync: true,      // Sync across tabs
       soundVolume: 0.3
@@ -63,6 +103,17 @@ export default function UserPanel({ token, onLogout }) {
             experience: data.experience,
             skills: data.skills
           });
+          // Restore any unsaved CV stored in localStorage (saved during beforeunload)
+          try {
+            const unsaved = localStorage.getItem('unsavedCv');
+            if (unsaved) {
+              const parsed = JSON.parse(unsaved);
+              setFormValues(parsed);
+              localStorage.removeItem('unsavedCv');
+            }
+          } catch (e) {
+            // ignore parse errors
+          }
         }
       } catch (err) {
         setMessage(err.message);
@@ -92,6 +143,8 @@ export default function UserPanel({ token, onLogout }) {
         saved = await cvApi.submit(formValues, token);
       }
       setCv(saved);
+      // Clear any persisted unsaved CV now that we've saved
+      try { localStorage.removeItem('unsavedCv'); } catch (e) { /* ignore */ }
       setMessage('CV saved successfully.');
     } catch (err) {
       setMessage(err.message);
@@ -109,6 +162,7 @@ export default function UserPanel({ token, onLogout }) {
       await cvApi.remove(cv._id, token);
       setCv(null);
       setFormValues(emptyCv);
+      try { localStorage.removeItem('unsavedCv'); } catch (e) { /* ignore */ }
       setMessage('CV deleted.');
     } catch (err) {
       setMessage(err.message);
@@ -154,7 +208,7 @@ export default function UserPanel({ token, onLogout }) {
           {cv && <span className={`status-badge ${cv.status}`}>{cv.status}</span>}
         </div>
         <div className="header-actions">
-          <SessionTimer inactiveFor={inactiveFor} inactivityTimeout={20 * 60 * 1000} />
+          <SessionTimer inactiveFor={inactiveFor} inactivityTimeout={5 * 60 * 1000} />
           <button className="link" onClick={onLogout}>
             Logout
           </button>
@@ -195,7 +249,7 @@ export default function UserPanel({ token, onLogout }) {
               required
               minLength={3}
               maxLength={120}
-              pattern="^[A-Za-z][A-Za-z\s.'-]*$"
+              pattern="^[A-Za-z][A-Za-z\\s.'-]*$"
               title="Use letters, spaces, apostrophes, periods, or dashes only."
             />
           </label>
@@ -208,7 +262,7 @@ export default function UserPanel({ token, onLogout }) {
               value={formValues.phone}
               onChange={handleChange}
               required
-              pattern="^\+?[0-9]{7,15}$"
+              pattern="^\\+?[0-9]{7,15}$"
               title="Enter 7-15 digits, optionally starting with +."
             />
           </label>
@@ -223,7 +277,7 @@ export default function UserPanel({ token, onLogout }) {
             required
             minLength={5}
             maxLength={200}
-            pattern="^[A-Za-z0-9\s,.'#-]+$"
+            pattern="^[A-Za-z0-9\\s,.'#-]+$"
             title="Use letters, numbers, spaces, commas, period, # or -."
           />
         </label>

@@ -21,10 +21,20 @@ app.use(helmet({
 }));
 app.use(cors({ origin: true, credentials: true }));
 
+const RATE_LIMIT_WINDOW_MIN = (process.env.RATE_LIMIT_WINDOW_MINUTES && parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES, 10)) || 15;
+const RATE_LIMIT_MAX = (process.env.RATE_LIMIT_MAX && parseInt(process.env.RATE_LIMIT_MAX, 10)) || 100;
+
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: 'Too many requests from this IP, please try again later.'
+  windowMs: RATE_LIMIT_WINDOW_MIN * 60 * 1000,
+  max: RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res /*, next */) => {
+    console.warn(`Rate limit exceeded: IP=${req.ip}, route=${req.originalUrl}`);
+    const retryAfterSeconds = Math.ceil((RATE_LIMIT_WINDOW_MIN * 60));
+    res.set('Retry-After', String(retryAfterSeconds));
+    res.status(429).json({ message: 'Too many requests from this IP, please try again later.' });
+  }
 });
 app.use('/api/', limiter);
 
