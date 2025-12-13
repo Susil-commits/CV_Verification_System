@@ -191,6 +191,39 @@ return (
 }
 ```
 
+---
+
+### 9. **Real-time Admin Notifications** 🚀
+- Push notifications to admin UI via WebSockets (socket.io).
+- Admins receive live toast notifications when new CVs are submitted, updated, or status changes.
+- Admin list updates automatically with new submissions and live status updates.
+- Works with `socket.io` on the server and `socket.io-client` in the browser.
+- Configure with `VITE_API_URL` (client) and `CLIENT_ORIGIN` (server) environment variables.
+
+Server changes:
+- `src/server.js`: Socket.io integration, attaching to HTTP server and exposing `app.set('io', io)`.
+- `src/routes/cv.js`: Emits `cv:created` and `cv:updated` events on creation and update.
+- `src/routes/admin.js`: Emits `cv:statusUpdated` when admins change status.
+
+Client changes:
+- `client/src/hooks/useRealtimeNotifications.js`: New hook to connect to socket.io and forward events.
+- `client/src/components/RealtimeToast.jsx`: Small toast component for incoming notifications.
+- `client/src/components/AdminPanel.jsx`: Joins realtime events, updates CV list in real-time, and shows toasts.
+
+Useful commands to test locally:
+```bash
+# install server deps
+npm install
+ # install client deps
+cd client && npm install
+
+# start server
+npm run dev
+
+# start client dev server
+cd client && npm run dev
+```
+
 ### Custom Auto-Save
 ```javascript
 const handleBeforeLogout = () => {

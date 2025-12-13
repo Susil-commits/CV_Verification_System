@@ -72,6 +72,14 @@ router.patch('/cvs/:id/status', async (req, res) => {
 
     cv.status = value.status;
     const updated = await cv.save();
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('cv:statusUpdated', { _id: updated._id, status: updated.status });
+    } catch (emitErr) {
+      console.warn('Failed to emit cv:statusUpdated event:', emitErr);
+    }
+
     return res.json(updated);
   } catch (err) {
     console.error(err);

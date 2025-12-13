@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -62,7 +64,27 @@ app.get('/', (req, res) => {
   res.sendFile('index.html', { root: 'public' });
 });
 
-app.listen(PORT, () => {
+// Create HTTP server and attach socket.io
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('Client connected via websocket:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// Make socket.io instance available to route handlers
+app.set('io', io);
+
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 

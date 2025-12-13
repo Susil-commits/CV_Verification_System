@@ -8,6 +8,8 @@ import SessionProgressBar from './SessionProgressBar';
 import IdleIndicator from './IdleIndicator';
 import SessionTimer from './SessionTimer';
 import useApiRateLimit from '../hooks/useApiRateLimit';
+import useRealtimeNotifications from '../hooks/useRealtimeNotifications';
+import RealtimeToast from './RealtimeToast';
 
 export default function AdminPanel({ token, onLogout }) {
   const [cvs, setCvs] = useState([]);
@@ -16,6 +18,7 @@ export default function AdminPanel({ token, onLogout }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(null);
+  const [toasts, setToasts] = useState([]);
   
   const { remaining: rateLimitRemaining, isRateLimited } = useApiRateLimit();
 
@@ -116,6 +119,31 @@ export default function AdminPanel({ token, onLogout }) {
     load();
   }, [load]);
 
+  // Realtime notification handler
+  const onRealtimeEvent = useCallback((type, payload) => {
+    if (!type) return;
+    const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (type === 'cv:created') {
+      // Refresh the list from server to ensure complete data
+      load();
+      setToasts((t) => [{ id, title: 'New CV submitted', message: `${payload.fullName} submitted a CV`, ts: Date.now() }, ...t]);
+    }
+    if (type === 'cv:updated') {
+      load();
+      setToasts((t) => [{ id, title: 'CV updated', message: `${payload.fullName} updated their CV`, ts: Date.now() }, ...t]);
+    }
+    if (type === 'cv:statusUpdated') {
+      load();
+      setToasts((t) => [{ id, title: 'CV status changed', message: `CV ${payload._id} status: ${payload.status}`, ts: Date.now() }, ...t]);
+    }
+    // Auto remove toasts after 6s
+    setTimeout(() => {
+      setToasts((cur) => cur.filter((x) => x.id !== id));
+    }, 6000);
+  }, []);
+
+  useRealtimeNotifications(onRealtimeEvent, token);
+
   const stats = useMemo(() => {
     const total = cvs.length;
     const pending = cvs.filter((cv) => cv.status === 'pending').length;
@@ -161,6 +189,7 @@ export default function AdminPanel({ token, onLogout }) {
 
   return (
     <section className="admin-layout">
+      <RealtimeToast toasts={toasts} removeToast={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       {showWarning && timeLeft !== null && (
         <SessionWarning
           timeLeft={timeLeft}

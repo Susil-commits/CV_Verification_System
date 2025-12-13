@@ -67,6 +67,17 @@ router.post('/', auth(), async (req, res) => {
       user: req.user.id
     });
 
+    // Populate user details for client-side convenience
+    await cv.populate('user', 'name email');
+
+    // Emit real-time event to admin clients
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('cv:created', { _id: cv._id, fullName: cv.fullName, user: cv.user, status: cv.status, createdAt: cv.createdAt });
+    } catch (emitErr) {
+      console.warn('Failed to emit cv:created event:', emitErr);
+    }
+
     return res.status(201).json(cv);
   } catch (err) {
     console.error(err);
@@ -102,6 +113,14 @@ router.put('/:id', auth(), async (req, res) => {
 
     Object.assign(cv, value);
     const updated = await cv.save();
+
+    try {
+      const io = req.app.get('io');
+      if (io) io.emit('cv:updated', { _id: updated._id, fullName: updated.fullName, user: updated.user, status: updated.status, updatedAt: updated.updatedAt });
+    } catch (emitErr) {
+      console.warn('Failed to emit cv:updated event:', emitErr);
+    }
+
     return res.json(updated);
   } catch (err) {
     console.error(err);

@@ -399,6 +399,44 @@ th {
   flex: 1;
 }
 
+/* Realtime toast styles */
+.realtime-toast-wrapper {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  z-index: 9999;
+}
+.realtime-toast {
+  background: #111827;
+  border: 1px solid #1e293b;
+  color: #e2e8f0;
+  padding: 0.85rem 1rem;
+  border-radius: 0.75rem;
+  min-width: 260px;
+  max-width: 320px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.realtime-toast-title {
+  font-weight: 700;
+  color: #a5b4fc;
+}
+.realtime-toast-message {
+  font-size: 0.9rem;
+  color: #cbd5f5;
+}
+.realtime-toast-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
 .segmented {
   display: inline-flex;
   border: 1px solid #334155;
