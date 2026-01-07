@@ -165,10 +165,4 @@ Serve the frontend build with any static host (e.g., Nginx) and point it to the 
 - `client` build succeeds (see `npm run build` result).
 - API routes expect valid JWT tokens; unauthorized requests return `401/403`.
 
-## Next Ideas
-
-- Add pagination/search for admin CV list.
-- Send email notifications on approval/rejection.
-- Support file uploads (PDF resumes) via S3/GridFS.
-
 
